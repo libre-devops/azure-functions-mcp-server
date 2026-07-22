@@ -1,4 +1,7 @@
-data "azurerm_subscription" "current" {}
+output "allowed_workspace_ids" {
+  description = "The workspace GUIDs on the run_kql allow-list (the ALLOWED_WORKSPACE_IDS app setting)."
+  value       = local.allowed_workspace_guids
+}
 
 output "function_app_name" {
   description = "The function app name, for az deployments and key retrieval."
@@ -20,12 +23,10 @@ output "resource_group_name" {
   value       = local.rg_name
 }
 
-output "test_vnet_query" {
-  description = "Ready-made get_next_cidr tool arguments against the test vnet; with its two /26s used, the answer should propose 10.30.0.128/26."
-  value = var.deploy_test_vnet ? jsonencode({
-    subscription_id      = data.azurerm_subscription.current.subscription_id
-    resource_group_name  = local.rg_name
-    virtual_network_name = local.vnet_name
-    cidr                 = "26"
-  }) : "test vnet disabled"
+output "test_law_query" {
+  description = "Ready-made run_kql tool arguments against the test workspace; the query answers even on an empty workspace."
+  value = var.deploy_test_law ? jsonencode({
+    workspace_id = module.log_analytics[0].workspace_guids[local.law_name]
+    query        = "print greeting='hello from run_kql'"
+  }) : "test law disabled"
 }

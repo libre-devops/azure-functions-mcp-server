@@ -1,7 +1,7 @@
 # Standalone path: copy to terraform.tfvars (gitignored) and make it yours. Every value has a
-# sensible default, so only set what differs for you. This path seeds a small test vnet so the
-# get_next_cidr tool has something real to answer the moment the deploy lands; the smoke expects
-# it to propose 10.30.0.128/26. For a deployment against networks you already have, start from
+# sensible default, so only set what differs for you. This path seeds a small Log Analytics
+# workspace so the run_kql tool has something real to answer the moment the deploy lands; the
+# smoke queries it. For a deployment against workspaces you already have, start from
 # terraform.tfvars.byon.example instead.
 
 owner       = "craig@craigthacker.dev"
@@ -11,4 +11,4 @@ short = "ldo"
 loc   = "uks"
 env   = "dev"
 
-deploy_test_vnet = true
+deploy_test_law = true

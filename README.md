@@ -9,8 +9,9 @@
 
 # azure-functions-mcp-server
 
-A remote MCP server hosted on Azure Functions: Azure network tools your AI agents can call, built
-basic but extensible, so wiring in your own tool is dropping one Python file into a folder.
+A remote MCP server hosted on Azure Functions: scoped, read-only Azure estate tools that AI
+agents (Security Copilot among them) can reach over MCP, built basic but extensible, so wiring in
+your own tool is dropping one Python file into a folder.
 
 [![CI](https://github.com/libre-devops/azure-functions-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/libre-devops/azure-functions-mcp-server/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/libre-devops/azure-functions-mcp-server)](./LICENSE)
@@ -18,20 +19,21 @@ basic but extensible, so wiring in your own tool is dropping one Python file int
 ## Overview
 
 Azure Functions hosts remote [MCP](https://modelcontextprotocol.io) servers natively: the GA MCP
-extension handles the protocol (JSON-RPC framing, tool discovery, the Streamable HTTP transport)
-and your functions become the tools. This repo is the Libre DevOps take on that: a Python
-function app on a Flex Consumption plan, deployed by Terraform composed entirely from the
-published estate modules, with the same treatment as
-[FindNextCIDRRange](https://github.com/libre-devops/FindNextCIDRRange): unit tests, a pwsh
-justfile, CI with tflint and a gated trivy scan, CodeQL, dependabot, and a smoke that speaks real
-MCP against the deployed server.
+extension handles the protocol (JSON-RPC framing, tool discovery, the Streamable HTTP transport
+at `/runtime/webhooks/mcp`) and your functions become the tools. This repo is the Libre DevOps
+take on that: a Python function app on a Flex Consumption plan, deployed by Terraform composed
+entirely from the published estate modules, with unit tests, a pwsh justfile, CI with tflint and
+a gated trivy scan, CodeQL, dependabot, and a smoke that speaks real MCP against the deployed
+server.
 
-The server starts with two tools from the same domain as FindNextCIDRRange:
+The launch tool:
 
 | Tool | Needs | Answers |
 | --- | --- | --- |
-| `check_cidr` | Nothing (pure arithmetic) | Whether Azure would accept a subnet of that size (/2 through /29), the total and usable counts, and the five addresses Azure reserves in every subnet (network, default gateway, two for Azure DNS, broadcast). A /30 is answered, not errored: `validAzureSubnet: false` with the reason. |
-| `get_next_cidr` | Reader on the vnet's scope | The next free subnet of a requested size in an Azure virtual network: the first candidate that fits without overlapping anything already there. Nothing is created or reserved. |
+| `run_kql` | Log Analytics Reader on allow-listed workspaces | A read-only KQL query against an Azure Log Analytics workspace. Two gates in front of every query: the deployment's workspace allow-list (an app setting the Terraform manages), then the identity's own RBAC. Results are capped (100 rows, long cells truncated) so one query cannot flood a model's context. |
+
+The Log Analytics query API is read-only by design, so the tool cannot mutate anything no matter
+what it is asked.
 
 ## Wiring in your own tool
 
@@ -55,29 +57,33 @@ def my_tool(thing: str) -> str:
 Nothing else needs touching: no registry, no config, no edits to existing files. The function
 name is the tool name, the docstring is the tool description, and `mcp_tool_property` declares
 the arguments. Keep business logic in `src/lib/` as pure functions so the unit tests can drive it
-without Azure; the tool discovery test will insist your tool carries a real description.
+without Azure; the tool discovery test will insist your tool carries a real description. Keep
+tool inputs to primitive types (Security Copilot imports nothing else), and keep tools
+non-destructive: read tools compose safely, and Security Copilot refuses tools marked
+destructive anyway.
 
 ## Deploy
 
 Two paths, chosen entirely by tfvars.
 
-**Standalone** (the default) seeds a small test vnet with two subnets already carved, so
-`get_next_cidr` has a real question to answer the moment the deploy lands:
+**Standalone** (the default) seeds a small Log Analytics workspace, so `run_kql` has something
+real to answer the moment the deploy lands:
 
 ```bash
 az login
 export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
 cp terraform/terraform.tfvars.example terraform/terraform.tfvars   # then make it yours (owner tag etc.)
-just apply       # the stack: function app, identity, Reader grant, test vnet
+just apply       # the stack: function app, identity, test workspace, Log Analytics Reader grant
 just package     # zip the source (dependencies build remotely on deploy)
 just deploy      # push the zip to the app
-just smoke       # a real MCP session: initialize, tools/list, and a call of each tool
+just smoke       # a real MCP session: initialize, tools/list, the allow-list refusal, a live query
 ```
 
-**Bring your own network** deploys nothing but the function and points Reader at the networks you
-already have: start from `terraform/terraform.tfvars.byon.example` instead, which sets
-`deploy_test_vnet = false` and lists your `reader_scopes` (subscription, resource group, or single
-vnet IDs; narrower is better). Same `just` steps afterwards.
+**Bring your own workspaces** deploys nothing but the function and points it at the Log Analytics
+workspaces you already have: start from `terraform/terraform.tfvars.byon.example` instead, which
+sets `deploy_test_law = false` and lists your `workspace_scopes` (LAW ARM resource IDs). The
+server's identity gets Log Analytics Reader on exactly those, and their workspace GUIDs become
+the tool's allow-list. Same `just` steps afterwards.
 
 State is local and gitignored; this is a deploy-into-your-tenant tool, not a shared pipeline.
 
@@ -110,21 +116,28 @@ for the key rather than committing it:
 }
 ```
 
+### Security Copilot
+
+Security Copilot consumes MCP servers as custom plugins (Preview) via a YAML manifest;
+[`manifests/security-copilot.yaml`](./manifests/security-copilot.yaml) is this server's manifest,
+ready to fill in and upload. One hard requirement to know: the manifest can only express OAuth or
+Entra delegated auth, so the default key-auth deployment cannot be registered there. The path to
+Copilot is the built-in Entra authorization milestone (App Service authentication on the app, an
+Entra app registration exposing a `user_impersonation` scope, and the key requirement switched
+off in host.json); the manifest documents that target shape. Every header-capable MCP client
+works today with the key.
+
 ## Notes
 
 - The MCP endpoint is platform-provided; nothing MCP-specific exists at the ARM layer, which is
-  why the Terraform is nothing but the estate's standard flex function app composition. The one
-  provider gap worth knowing: the azurerm host-keys data source does not expose the
-  `mcp_extension` system key, so `just mcp-key` and `just smoke` read it with the az CLI instead
-  (keeping it out of Terraform state is no bad thing).
-- `get_next_cidr` authenticates outward with `DefaultAzureCredential`, so the app's managed
-  identity is the credential in Azure. The stack grants Reader to both of the app's identities
+  why the Terraform is nothing but the estate's standard flex function app composition plus a
+  workspace and a role grant. The one provider gap worth knowing: the azurerm host-keys data
+  source does not expose the `mcp_extension` system key, so `just mcp-key` and `just smoke` read
+  it with the az CLI instead (keeping it out of Terraform state is no bad thing).
+- `run_kql` authenticates outward with `DefaultAzureCredential`, so the app's managed identity is
+  the credential in Azure. The stack grants Log Analytics Reader to both of the app's identities
   (system-assigned and user-assigned), because the credential chain picks the system-assigned one
   unless told otherwise.
-- Key auth is the access control here. The platform also supports built-in MCP authorization
-  (Entra ID OAuth via App Service authentication) for spec-compliant sign-in; it is deliberately
-  not wired in yet, to keep the reference basic. The `auth_settings_v2` surface it needs is
-  already exposed by the flex module when the time comes.
 - Flex Consumption zip deploys flake: `just deploy` pushes with a spaced retry and a remote
   dependency build, and the only verdict that counts is `just smoke` completing a real MCP
   session.

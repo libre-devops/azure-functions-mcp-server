@@ -1,0 +1,36 @@
+# Security Copilot MCP plugin manifest for this server (Security Copilot MCP plugins are Preview).
+# Upload via Security Copilot > Manage plugins > Custom > Add plugin > Security Copilot plugin.
+#
+# PREREQUISITE: Security Copilot's manifest can only express OAuth or Entra delegated auth; there
+# is no way to send the x-functions-key header this deployment uses by default. Registering this
+# server therefore requires the built-in Entra authorization milestone first: App Service
+# authentication (authsettingsV2) on the function app, an Entra app registration exposing a
+# user_impersonation scope, and host.json system.webhookAuthorizationLevel set to Anonymous so
+# the key requirement drops away in favour of identity. Until that lands, this file is the
+# documented target shape, and any MCP client that CAN send headers (VS Code, Claude, the smoke)
+# works today with the key.
+#
+# Fill in before upload:
+#   <functionapp>   the function app's default hostname (terraform output function_hostname)
+#   <app-id-uri>    the Entra app registration's identifier URI (api://...)
+
+Descriptor:
+  Name: LibreDevOpsAzureToolsMcp
+  DisplayName: Libre DevOps Azure Tools (MCP)
+  Description: Scoped, read-only Azure estate tools over MCP
+  DescriptionForModel: >-
+    Read-only Azure estate tools. run_kql executes a KQL query against an allow-listed Azure Log
+    Analytics workspace; results are capped, so project the columns you need and summarize where
+    you can.
+  SupportedAuthTypes:
+    - AADDelegated
+
+SkillGroups:
+  - Format: MCP
+    Settings:
+      Endpoint: https://<functionapp>.azurewebsites.net/runtime/webhooks/mcp
+      UseStreamableHttp: true
+      UsePluginAuth: false
+      TokenScope: api://<app-id-uri>/user_impersonation
+      TimeoutInSeconds: 120
+      AllowedTools: run_kql

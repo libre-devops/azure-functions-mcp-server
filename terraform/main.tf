@@ -5,15 +5,16 @@
 # nothing MCP-specific exists at the ARM layer. Blocks are ordered by dependency, top to bottom.
 #
 # Two deployment paths, chosen by tfvars alone:
-#   Standalone (default): deploy_test_vnet = true seeds a small vnet with two subnets carved, so
-#   the get_next_cidr tool has a real question to answer the moment the deploy lands.
-#   Bring your own network: deploy_test_vnet = false, reader_scopes = the subscription, resource
-#   group, or vnet IDs holding the networks your agents will ask about.
+#   Standalone (default): deploy_test_law = true seeds a small Log Analytics workspace, so the
+#   run_kql tool has something real to answer the moment the deploy lands.
+#   Bring your own workspaces: deploy_test_law = false, workspace_scopes = the ARM resource IDs
+#   of the Log Analytics workspaces your agents may query. The server's identity is granted Log
+#   Analytics Reader on exactly those, and their workspace GUIDs become the tool's allow-list.
 locals {
   location  = lookup(var.regions, var.loc, "uksouth")
   rg_name   = "rg-${var.short}-${var.loc}-${var.env}-mcp-001"
   func_name = "func-${var.short}-${var.loc}-${var.env}-mcp-001"
-  vnet_name = "vnet-${var.short}-${var.loc}-${var.env}-mcp-001"
+  law_name  = "law-${var.short}-${var.loc}-${var.env}-mcp-001"
 
   # Both identities need the grant: the app carries a user-assigned identity for host storage, but
   # DefaultAzureCredential with no AZURE_CLIENT_ID authenticates as the system-assigned one, so
@@ -25,6 +26,13 @@ locals {
     module.flex_function_app.identity_principal_ids[local.func_name].system_assigned,
     module.flex_function_app.identity_principal_ids[local.func_name].user_assigned,
   ]
+
+  # The tool-facing allow-list: workspace GUIDs (customer ids), one per workspace the identity is
+  # granted on. Values are apply-time-known, which is fine; only for_each keys must be plan-known.
+  allowed_workspace_guids = concat(
+    var.deploy_test_law ? [module.log_analytics[0].workspace_guids[local.law_name]] : [],
+    data.azurerm_log_analytics_workspace.byon[*].workspace_id,
+  )
 }
 
 module "tags" {
@@ -43,6 +51,32 @@ module "rg" {
   resource_groups = [{ name = local.rg_name, location = local.location, tags = module.tags.tags }]
 }
 
+# A small test workspace so run_kql has something real to answer; module defaults throughout
+# (PerGB2018, 90 day retention). Even an empty workspace answers KQL like `print`.
+module "log_analytics" {
+  count = var.deploy_test_law ? 1 : 0
+
+  source  = "libre-devops/log-analytics-workspace/azurerm"
+  version = "~> 4.0"
+
+  resource_group_id = module.rg.ids[local.rg_name]
+  location          = local.location
+  tags              = module.tags.tags
+
+  log_analytics_workspaces = {
+    (local.law_name) = {}
+  }
+}
+
+# Bring-your-own workspaces are read back to translate ARM resource IDs (what the caller has, and
+# what the role grants need) into workspace GUIDs (what the query API and the allow-list need).
+data "azurerm_log_analytics_workspace" "byon" {
+  count = length(var.workspace_scopes)
+
+  name                = provider::azurerm::parse_resource_id(var.workspace_scopes[count.index]).resource_name
+  resource_group_name = provider::azurerm::parse_resource_id(var.workspace_scopes[count.index]).resource_group_name
+}
+
 module "flex_function_app" {
   source  = "libre-devops/flex-consumption-function-app/azurerm"
   version = "~> 4.0"
@@ -55,72 +89,40 @@ module "flex_function_app" {
     (local.func_name) = {
       runtime_name    = "python"
       runtime_version = var.python_version
+
+      # The run_kql tool refuses any workspace not on this list, before RBAC even gets a say.
+      app_settings = {
+        ALLOWED_WORKSPACE_IDS = join(",", local.allowed_workspace_guids)
+      }
     }
   }
 }
 
-# Reader is exactly what get_next_cidr needs to enumerate a vnet's subnets, nothing more; the
-# check_cidr tool needs no identity at all. The standalone path grants it on this resource group
-# for the test vnet below; the bring-your-own path grants it on each scope in var.reader_scopes.
-# Keys index into the caller's literal list, so they stay plan-known.
+# Log Analytics Reader is exactly what run_kql needs, nothing more. The standalone path grants it
+# on the test workspace; the bring-your-own path grants it on each workspace in
+# var.workspace_scopes. Keys index into the caller's literal list, so they stay plan-known.
 module "role_assignment" {
   source  = "libre-devops/role-assignment/azurerm"
   version = "~> 4.1"
 
   role_assignments = merge(
-    var.deploy_test_vnet ? {
-      test-vnet-reader = {
-        scope                            = module.rg.ids[local.rg_name]
+    var.deploy_test_law ? {
+      test-law-reader = {
+        scope                            = module.log_analytics[0].workspace_ids[local.law_name]
         principal_ids                    = local.function_principal_ids
-        role_names                       = ["Reader"]
+        role_names                       = ["Log Analytics Reader"]
         principal_type                   = "ServicePrincipal"
         skip_service_principal_aad_check = true
       }
     } : {},
     {
-      for idx, scope in var.reader_scopes : "byon-reader-${idx}" => {
+      for idx, scope in var.workspace_scopes : "byon-law-reader-${idx}" => {
         scope                            = scope
         principal_ids                    = local.function_principal_ids
-        role_names                       = ["Reader"]
+        role_names                       = ["Log Analytics Reader"]
         principal_type                   = "ServicePrincipal"
         skip_service_principal_aad_check = true
       }
     }
   )
-}
-
-# A small test vnet with two subnets already carved, so get_next_cidr has a real question to
-# answer: 10.30.0.0/24 with two /26s used means the next free /26 is 10.30.0.128/26.
-module "subnet_calculator" {
-  count = var.deploy_test_vnet ? 1 : 0
-
-  source  = "libre-devops/subnet-calculator/azurerm"
-  version = "~> 4.0"
-
-  base_cidr = "10.30.0.0/24"
-  vnet_name = local.vnet_name
-
-  subnets = [
-    { purpose = "app", size = 26 },
-    { purpose = "data", size = 26 },
-  ]
-}
-
-module "network" {
-  count = var.deploy_test_vnet ? 1 : 0
-
-  source  = "libre-devops/network/azurerm"
-  version = "~> 4.0"
-
-  resource_group_id = module.rg.ids[local.rg_name]
-  location          = local.location
-  tags              = module.tags.tags
-
-  vnet_name     = local.vnet_name
-  address_space = [module.subnet_calculator[0].base_cidr]
-  subnets = {
-    for name, subnet in module.subnet_calculator[0].network_subnets : name => {
-      address_prefixes = subnet.address_prefixes
-    }
-  }
 }

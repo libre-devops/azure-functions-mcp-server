@@ -89,8 +89,8 @@ mcp-key:
     Write-Host "x-functions-key: $key"
 
 # Exercise the deployed MCP server end to end as a real client: initialize the session, list the
-# tools, call check_cidr (expecting the /30 rejection), and call get_next_cidr against the test
-# vnet (skipped on the bring-your-own-network path, expecting 10.30.0.128/26)
+# tools, prove the allow-list refuses a workspace off the list, and call run_kql against the test
+# workspace (skipped on the bring-your-own-workspaces path)
 smoke:
     #!/usr/bin/env pwsh
     Set-StrictMode -Version Latest
@@ -117,20 +117,18 @@ smoke:
     Invoke-Mcp @{ jsonrpc = '2.0'; method = 'notifications/initialized' } | Out-Null
     $tools = (Invoke-Mcp @{ jsonrpc = '2.0'; id = 2; method = 'tools/list'; params = @{} }).result.tools.name
     Write-Host "tools/list -> $($tools -join ', ')"
-    foreach ($required in 'check_cidr', 'get_next_cidr') {
-        if ($tools -notcontains $required) { throw "tool $required is missing from the server" }
-    }
-    $verdict = (Invoke-Mcp @{ jsonrpc = '2.0'; id = 3; method = 'tools/call'; params = @{ name = 'check_cidr'; arguments = @{ cidr = '10.0.0.0/30' } } }).result.content[0].text | ConvertFrom-Json
-    if ($verdict.validAzureSubnet) { throw 'a /30 must not be a valid Azure subnet' }
-    Write-Host 'tools/call check_cidr (/30) -> correctly rejected'
-    $query = terraform -chdir=terraform output -raw test_vnet_query
-    if ($query -ne 'test vnet disabled') {
+    if ($tools -notcontains 'run_kql') { throw 'tool run_kql is missing from the server' }
+    $refused = (Invoke-Mcp @{ jsonrpc = '2.0'; id = 3; method = 'tools/call'; params = @{ name = 'run_kql'; arguments = @{ workspace_id = '00000000-0000-0000-0000-000000000000'; query = 'print 1' } } }).result.content[0].text | ConvertFrom-Json
+    if (-not ($refused.error -like '*allow-list*')) { throw "a workspace off the allow-list must be refused, got: $($refused | ConvertTo-Json -Compress)" }
+    Write-Host 'tools/call run_kql (unlisted workspace) -> refused by the allow-list'
+    $query = terraform -chdir=terraform output -raw test_law_query
+    if ($query -ne 'test law disabled') {
         $arguments = @{}
         ($query | ConvertFrom-Json).psobject.Properties | ForEach-Object { $arguments[$_.Name] = $_.Value }
-        $answer = (Invoke-Mcp @{ jsonrpc = '2.0'; id = 4; method = 'tools/call'; params = @{ name = 'get_next_cidr'; arguments = $arguments } }).result.content[0].text | ConvertFrom-Json
-        if (-not $answer.proposedCIDR) { throw "get_next_cidr answered without a proposedCIDR: $answer" }
-        Write-Host "tools/call get_next_cidr (test vnet) -> $($answer.proposedCIDR)"
+        $answer = (Invoke-Mcp @{ jsonrpc = '2.0'; id = 4; method = 'tools/call'; params = @{ name = 'run_kql'; arguments = $arguments } }).result.content[0].text | ConvertFrom-Json
+        if ($answer.rows[0].greeting -ne 'hello from run_kql') { throw "run_kql answered unexpectedly: $($answer | ConvertTo-Json -Compress)" }
+        Write-Host "tools/call run_kql (test workspace) -> $($answer.rows[0].greeting)"
     } else {
-        Write-Host 'test vnet disabled; skipping the get_next_cidr call'
+        Write-Host 'test law disabled; skipping the run_kql call'
     }
     Write-Host 'smoke: the MCP server is answering'

@@ -1,8 +1,7 @@
-# Bring-your-own-network path: copy to terraform.tfvars (gitignored) and make it yours. Only the
-# function app deploys (no test vnet), and its identity is granted Reader on exactly the scopes
-# you list, which is all the get_next_cidr tool needs to answer about your existing networks. A
-# scope can be a whole subscription, a resource group, or a single vnet; narrower is better. The
-# check_cidr tool needs no grants at all.
+# Bring-your-own-workspaces path: copy to terraform.tfvars (gitignored) and make it yours. Only
+# the function app deploys (no test workspace), and its identity is granted Log Analytics Reader
+# on exactly the workspaces you list, whose GUIDs become the run_kql allow-list. The tool refuses
+# any workspace off the list before RBAC even gets a say.
 
 owner       = "craig@craigthacker.dev"
 cost_centre = "1888/67"
@@ -11,9 +10,8 @@ short = "ldo"
 loc   = "uks"
 env   = "prd"
 
-deploy_test_vnet = false
+deploy_test_law = false
 
-reader_scopes = [
-  "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-my-network",
-  "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-other/providers/Microsoft.Network/virtualNetworks/vnet-hub",
+workspace_scopes = [
+  "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-my-soc/providers/Microsoft.OperationalInsights/workspaces/law-my-sentinel",
 ]

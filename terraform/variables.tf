@@ -4,8 +4,8 @@ variable "cost_centre" {
   default     = "1888/67"
 }
 
-variable "deploy_test_vnet" {
-  description = "Deploy a small vnet with pre-seeded subnets alongside the function, so the get_next_cidr tool has something real to answer against. Costs nothing; turn off for a production deployment."
+variable "deploy_test_law" {
+  description = "Deploy a small Log Analytics workspace alongside the function, so the run_kql tool has something real to answer against. Turn off for a production deployment."
   type        = bool
   default     = true
 }
@@ -28,8 +28,8 @@ variable "python_version" {
   default     = "3.14"
 }
 
-variable "reader_scopes" {
-  description = "Bring-your-own-network path: Azure resource IDs (subscription, resource group, or vnet) where the server's identity is granted Reader, so get_next_cidr can answer about networks that already exist. Leave empty on the standalone path."
+variable "workspace_scopes" {
+  description = "Bring-your-own-workspaces path: ARM resource IDs of the Log Analytics workspaces your agents may query. The server's identity is granted Log Analytics Reader on exactly these, and their workspace GUIDs become the run_kql allow-list. Leave empty on the standalone path."
   type        = list(string)
   default     = []
 }

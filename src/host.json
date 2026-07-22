@@ -15,8 +15,8 @@
   "extensions": {
     "mcp": {
       "serverName": "LibreDevOpsAzureTools",
-      "serverVersion": "1.0.0",
-      "instructions": "Azure network tools. check_cidr validates any IPv4 CIDR against Azure's subnet rules (the five reserved addresses, the /2 to /29 size limits) with no Azure access needed. get_next_cidr proposes the next free subnet of a requested size in an Azure virtual network the server's identity can read."
+      "serverVersion": "2.0.0",
+      "instructions": "Scoped, read-only Azure estate tools for AI agents. run_kql executes a KQL query against an allow-listed Azure Log Analytics workspace the server's identity can read; results are capped, so ask precise questions (project the columns you need, summarize where you can)."
     }
   }
 }

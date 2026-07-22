@@ -14,7 +14,7 @@ REGISTERED = {f.get_function_name(): f for f in function_app.app.get_functions()
 
 
 def test_every_tool_module_is_discovered():
-    assert set(REGISTERED) == {"check_cidr", "get_next_cidr"}
+    assert set(REGISTERED) == {"run_kql"}
 
 
 def test_every_registered_function_is_an_mcp_tool():
