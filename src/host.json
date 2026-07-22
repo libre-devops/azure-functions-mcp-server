@@ -1,0 +1,22 @@
+{
+  "version": "2.0",
+  "logging": {
+    "applicationInsights": {
+      "samplingSettings": {
+        "isEnabled": true,
+        "excludedTypes": "Request"
+      }
+    }
+  },
+  "extensionBundle": {
+    "id": "Microsoft.Azure.Functions.ExtensionBundle",
+    "version": "[4.0.0, 5.0.0)"
+  },
+  "extensions": {
+    "mcp": {
+      "serverName": "LibreDevOpsAzureTools",
+      "serverVersion": "1.0.0",
+      "instructions": "Azure network tools. check_cidr validates any IPv4 CIDR against Azure's subnet rules (the five reserved addresses, the /2 to /29 size limits) with no Azure access needed. get_next_cidr proposes the next free subnet of a requested size in an Azure virtual network the server's identity can read."
+    }
+  }
+}

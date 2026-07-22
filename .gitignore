@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+.python_packages/
+.pytest_cache/
+function.zip
+terraform/.terraform/
+terraform/*.tfstate*
+terraform/*.tfvars
+terraform/.terraform.lock.hcl
